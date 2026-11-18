@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Projects · NetSec Toolkit</title>
+<style>
+  :root { --bg:#0b0f14; --card:#121821; --line:#223040; --text:#d7e1ec; --muted:#7f8ea3; --acc:#22d3a6; --warn:#ff6b6b; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace; padding:28px 16px; }
+  .wrap { max-width:760px; margin:0 auto; }
+  h1 { margin:0; font-size:22px; color:var(--acc); }
+  .sub { color:var(--muted); font-size:13px; margin:6px 0 22px; }
+  .tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:16px; }
+  .tab { background:transparent; border:1px solid var(--line); color:var(--muted); padding:8px 14px; border-radius:8px; cursor:pointer; font:inherit; font-size:13px; }
+  .tab.active { border-color:var(--acc); color:var(--acc); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:20px; }
+  .hidden { display:none; }
+  label { display:block; font-size:12px; color:var(--muted); margin:0 0 6px; }
+  input, textarea, select { width:100%; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:10px; font:inherit; font-size:14px; }
+  textarea { min-height:160px; resize:vertical; }
+  .row { display:flex; gap:10px; margin-bottom:14px; }
+  .row > * { flex:1; }
+  table { width:100%; border-collapse:collapse; margin-top:14px; font-size:14px; }
+  td { padding:7px 4px; border-bottom:1px solid var(--line); }
+  td:first-child { color:var(--muted); width:45%; }
+  .err { color:var(--warn); margin-top:12px; font-size:13px; }
+  .warn { color:var(--warn); }
+  .ok { color:var(--acc); }
+  .hash { word-break:break-all; }
+  button.act { background:var(--acc); color:#04120d; border:none; border-radius:8px; padding:10px 16px; font:inherit; font-weight:700; cursor:pointer; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:12px; }
+  .chip { border:1px solid var(--line); border-radius:6px; padding:4px 8px; font-size:12px; }
+  footer { color:var(--muted); font-size:12px; text-align:center; margin-top:18px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>&gt; NetSec Toolkit_</h1>
+  <p class="sub">IT / ağ / siber güvenlik araçları. Her şey tarayıcında çalışır, hiçbir veri gönderilmez.</p>
+
+  <div class="tabs">
+    <button class="tab active" data-t="subnet">Subnet hesaplayıcı</button>
+    <button class="tab" data-t="hash">Hash üretici</button>
+    <button class="tab" data-t="log">SSH log analizi</button>
+  </div>
+
+  <!-- SUBNET -->
+  <section class="card" id="t-subnet">
+    <div class="row">
+      <div><label>IP / CIDR</label><input id="cidr" value="192.168.1.10/24"></div>
+      <div style="flex:.5"><label>Böl (yeni prefix, opsiyonel)</label><input id="split" type="number" min="1" max="32" placeholder="örn. 26"></div>
+    </div>
+    <table id="subnetOut"></table>
+    <div class="chips" id="splitOut"></div>
+    <div class="err" id="subnetErr"></div>
+  </section>
+
+  <!-- HASH -->
+  <section class="card hidden" id="t-hash">
+    <div class="row">
+      <div><label>Metin</label><input id="htext" placeholder="hash'lenecek metin"></div>
+    </div>
+    <div class="row">
+      <div><label>veya dosya seç</label><input id="hfile" type="file"></div>
+    </div>
+    <div class="row">
+      <div><label>Doğrulanacak hash (opsiyonel)</label><input id="hverify" placeholder="beklenen hash değeri"></div>
+    </div>
+    <table id="hashOut"></table>
+    <div id="verifyOut" style="margin-top:12px"></div>
+  </section>
+
+  <!-- LOG -->
+  <section class="card hidden" id="t-log">
+    <label>auth.log içeriğini yapıştır</label>
+    <textarea id="logText" placeholder="Nov 18 10:01:02 server sshd[1201]: Failed password for root from 203.0.113.45 port 51122 ssh2"></textarea>
+    <div class="row" style="margin-top:12px; align-items:end">
+      <div style="flex:.4"><label>Şüpheli eşiği</label><input id="thr" type="number" value="5" min="1"></div>
+      <div style="flex:.6; text-align:right"><button class="act" id="logBtn">Analiz et</button></div>
+    </div>
+    <div id="logOut"></div>
+  </section>
+
+  <footer>ai-projects · netsec-toolkit</footer>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+// ---------- tabs
+document.querySelectorAll(".tab").forEach(b => b.onclick = () => {
+  document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === b));
+  ["subnet", "hash", "log"].forEach(t => $("t-" + t).classList.toggle("hidden", t !== b.dataset.t));
+});
+
+// ---------- subnet (IPv4)
+const ipToInt = ip => {
+  const p = ip.split(".");
+  if (p.length !== 4 || p.some(x => !/^\d{1,3}$/.test(x) || +x > 255)) throw new Error("Geçersiz IPv4 adresi");
+  return p.reduce((a, x) => (a << 8 >>> 0) + +x, 0) >>> 0;
+};
+const intToIp = n => [24, 16, 8, 0].map(s => (n >>> s) & 255).join(".");
+
+function subnetInfo(cidr) {
+  const [ip, pre = "32"] = cidr.trim().split("/");
+  const prefix = +pre;
+  if (!/^\d+$/.test(pre) || prefix < 0 || prefix > 32) throw new Error("Prefix 0-32 arasında olmalı");
+  const ipn = ipToInt(ip);
+  const mask = prefix === 0 ? 0 : (0xFFFFFFFF << (32 - prefix)) >>> 0;
+  const net = (ipn & mask) >>> 0, bc = (net | ~mask) >>> 0;
+  const total = 2 ** (32 - prefix);
+  const small = prefix >= 31;
+  const o = ipn >>> 24;
+  const priv = (o === 10) || (o === 172 && ((ipn >>> 16) & 255) >= 16 && ((ipn >>> 16) & 255) <= 31) || (o === 192 && ((ipn >>> 16) & 255) === 168);
+  return {
+    net, prefix, rows: [
+      ["Ağ adresi", intToIp(net)], ["Alt ağ maskesi", intToIp(mask)], ["Wildcard", intToIp(~mask >>> 0)],
+      ["Broadcast", intToIp(bc)], ["İlk host", intToIp(small ? net : net + 1)], ["Son host", intToIp(small ? bc : bc - 1)],
+      ["Kullanılabilir host", (small ? total : total - 2).toLocaleString("tr")], ["Toplam adres", total.toLocaleString("tr")],
+      ["Sınıf", o < 128 ? "A" : o < 192 ? "B" : o < 224 ? "C" : o < 240 ? "D (multicast)" : "E"],
+      ["Özel (private) ağ", priv ? "Evet" : "Hayır"],
+      ["Binary maske", intToIp(mask).split(".").map(x => (+x).toString(2).padStart(8, "0")).join(".")],
+    ]
+  };
+}
+
+function renderSubnet() {
+  $("subnetErr").textContent = ""; $("splitOut").innerHTML = "";
+  try {
+    const r = subnetInfo($("cidr").value);
+    $("subnetOut").innerHTML = r.rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("");
+    const np = +$("split").value;
+    if (np) {
+      if (np <= r.prefix || np > 32) throw new Error("Yeni prefix mevcut prefix'ten büyük ve en fazla 32 olmalı");
+      const count = 2 ** (np - r.prefix);
+      if (count > 256) throw new Error(`${count} alt ağ çok fazla (en fazla 256 gösterilir)`);
+      const step = 2 ** (32 - np);
+      $("splitOut").innerHTML = Array.from({ length: count }, (_, i) => `<span class="chip">${intToIp(r.net + i * step)}/${np}</span>`).join("");
+    }
+  } catch (e) { $("subnetErr").textContent = e.message; if (!$("subnetOut").innerHTML) return; }
+}
+$("cidr").oninput = $("split").oninput = renderSubnet;
+renderSubnet();
+
+// ---------- hash (Web Crypto)
+const ALGOS = ["SHA-1", "SHA-256", "SHA-384", "SHA-512"];
+const hex = buf => [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+let lastHashes = {};
+
+async function renderHash(data) {
+  lastHashes = {};
+  for (const a of ALGOS) lastHashes[a] = hex(await crypto.subtle.digest(a, data));
+  $("hashOut").innerHTML = ALGOS.map(a => `<tr><td>${a}</td><td class="hash">${lastHashes[a]}</td></tr>`).join("");
+  renderVerify();
+}
+function renderVerify() {
+  const v = $("hverify").value.trim().toLowerCase();
+  if (!v || !Object.keys(lastHashes).length) { $("verifyOut").innerHTML = ""; return; }
+  const match = Object.entries(lastHashes).find(([, h]) => h === v);
+  $("verifyOut").innerHTML = match ? `<span class="ok">✓ Eşleşiyor (${match[0]})</span>` : `<span class="warn">✗ Eşleşmiyor</span>`;
+}
+$("htext").oninput = () => { $("hfile").value = ""; renderHash(new TextEncoder().encode($("htext").value)); };
+$("hfile").onchange = async () => { const f = $("hfile").files[0]; if (f) { $("htext").value = ""; renderHash(await f.arrayBuffer()); } };
+$("hverify").oninput = renderVerify;
+renderHash(new TextEncoder().encode(""));
+
+// ---------- auth.log analysis
+const esc = s => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+$("logBtn").onclick = () => {
+  const thr = +$("thr").value || 5;
+  const failed = {}, users = {}, accepted = [];
+  for (const line of $("logText").value.split("\n")) {
+    let m;
+    if ((m = line.match(/Failed password for (?:invalid user )?(\S+) from ([\d.:a-fA-F]+)/))) {
+      failed[m[2]] = (failed[m[2]] || 0) + 1; users[m[1]] = (users[m[1]] || 0) + 1;
+    } else if ((m = line.match(/Accepted (?:password|publickey) for (\S+) from ([\d.:a-fA-F]+)/))) {
+      accepted.push([m[1], m[2]]);
+    }
+  }
+  const sorted = o => Object.entries(o).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  const total = Object.values(failed).reduce((a, b) => a + b, 0);
+  const compromised = accepted.filter(([, ip]) => (failed[ip] || 0) >= thr);
+  let html = `<table><tr><td>Başarısız giriş</td><td>${total}</td></tr><tr><td>Farklı IP</td><td>${Object.keys(failed).length}</td></tr><tr><td>Başarılı giriş</td><td>${accepted.length}</td></tr></table>`;
+  html += `<table><tr><td><b>En çok deneyen IP</b></td><td></td></tr>` + sorted(failed).map(([ip, n]) => `<tr><td>${esc(ip)}</td><td>${n}${n >= thr ? ' <span class="warn">ŞÜPHELİ</span>' : ""}</td></tr>`).join("") + `</table>`;
+  html += `<table><tr><td><b>En çok denenen kullanıcı</b></td><td></td></tr>` + sorted(users).map(([u, n]) => `<tr><td>${esc(u)}</td><td>${n}</td></tr>`).join("") + `</table>`;
+  if (compromised.length) html += `<p class="warn">⚠ Brute-force yapan IP'den başarılı giriş: ${compromised.map(([u, ip]) => esc(u) + " ← " + esc(ip)).join(", ")}</p>`;
+  else if (total) html += `<p class="ok">✓ Şüpheli IP'den başarılı giriş yok.</p>`;
+  $("logOut").innerHTML = html;
+};
+</script>
+</body>
+</html>
